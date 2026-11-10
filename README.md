@@ -53,7 +53,7 @@ Peer review is internal-only (Claude reviewers) on purpose — sending responses
 Requires Python 3.11+.
 
 ```bash
-git clone https://github.com/<you>/llm-council-hybrid.git
+git clone https://github.com/AfekPeretz/llm-council-hybrid.git
 cd llm-council-hybrid
 pip install httpx anthropic python-dotenv
 cp .env.template .env
