@@ -1,6 +1,6 @@
 ---
 name: llm-council-hybrid
-description: Run any decision, plan, or idea through an 8-voice LLM Council — 3 external models (GPT-4o, Gemini 1.5 Pro, Perplexity sonar-pro) plus 5 internal Claude lens agents — with anonymous peer review and a final chairman verdict. Use when the user says "council this", "run the council", "war room this", "pressure-test this", or asks for a multi-model / multi-perspective review of a decision.
+description: Run any decision, plan, or idea through an 8-voice LLM Council — 3 external models (GPT-4o, Gemini 1.5 Pro, Perplexity sonar-pro) plus 5 internal Claude lens agents — with anonymous peer review and a final chairman verdict. Use when the user says "council this", "run the council", "war room this", "pressure-test this", or asks for a multi-model / multi-perspective review of a decision. Do NOT trigger when the user says 'lens council' - that phrase belongs to the llm-council skill (Karpathy 5-lens, no API keys).
 ---
 
 # LLM Council Hybrid
