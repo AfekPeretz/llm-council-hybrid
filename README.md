@@ -55,7 +55,8 @@ Requires Python 3.11+.
 ```bash
 git clone https://github.com/AfekPeretz/llm-council-hybrid.git
 cd llm-council-hybrid
-pip install httpx anthropic python-dotenv
+python3 -m venv .venv
+.venv/bin/pip install httpx anthropic python-dotenv
 cp .env.template .env
 ```
 
@@ -77,8 +78,8 @@ Only `ANTHROPIC_API_KEY` is mandatory (it powers the 5 internal voices, 5 review
 ### Standalone
 
 ```bash
-python scripts/council.py "your decision here"
-python scripts/council.py -q "your decision here"   # verdict only, no progress logs
+.venv/bin/python scripts/council.py "your decision here"
+.venv/bin/python scripts/council.py -q "your decision here"   # verdict only, no progress logs
 ```
 
 A run takes roughly 20–60 seconds and costs about 3 external calls + 11 Claude calls.
@@ -123,7 +124,7 @@ llm-council-hybrid/
 Run the tests without any API keys:
 
 ```bash
-python test_step2.py && python test_pipeline.py
+.venv/bin/python test_step2.py && .venv/bin/python test_pipeline.py
 ```
 
 ## Credits

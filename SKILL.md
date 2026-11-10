@@ -28,7 +28,7 @@ Invoke this skill when the user says any of:
 ## How to run it
 
 ```bash
-python scripts/council.py "<the user's question, framed as one clear decision>"
+.venv/bin/python scripts/council.py "<the user's question, framed as one clear decision>"
 ```
 
 - Add `-q` / `--quiet` to suppress progress logs and print only the verdict.
@@ -37,7 +37,7 @@ python scripts/council.py "<the user's question, framed as one clear decision>"
 ## Workflow for Claude Code
 
 1. Take the user's decision/question. If it's vague, tighten it into ONE clear question first (the council performs badly on mushy prompts) — confirm the framing with the user if you changed it substantially.
-2. Run the command above from the skill's directory.
+2. `cd` into this skill's directory (the folder containing this SKILL.md) and run the command above with the `.venv` Python — the dependencies are installed only there. If `.venv` is missing, create it first: `python3 -m venv .venv && .venv/bin/pip install httpx anthropic python-dotenv`.
 3. Expect ~20–60 seconds: external calls have a 10s timeout with one 8s retry; Perplexity is usually the slowest because it runs a live web search.
 4. Present the verdict markdown to the user as-is (it ends with "The One Thing to Do First").
 5. If voices failed, mention which ones were absent — the verdict already accounts for it.
