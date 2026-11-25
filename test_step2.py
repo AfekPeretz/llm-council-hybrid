@@ -37,8 +37,20 @@ async def main():
     async def dead(timeout):
         raise ConnectionError("api down")
     r = await with_retry("Perplexity", "Outsider", dead)
-    assert not r.ok and "unavailable after retry" in r.error
+    assert not r.ok and r.error.startswith("unavailable (")
     print(f"3. graceful failure: PASS -> {r.error}")
+
+    # 3b. a 404 must NOT be retried (it won't fix itself), and the API's explanation must show
+    import httpx
+    calls = {"n": 0}
+    async def not_found(timeout):
+        calls["n"] += 1
+        req = httpx.Request("POST", "https://example.test")
+        raise httpx.HTTPStatusError("404", request=req,
+            response=httpx.Response(404, request=req, text="model not found"))
+    r = await with_retry("Gemini", "Expansionist", not_found)
+    assert not r.ok and calls["n"] == 1 and "model not found" in r.error, (calls, r.error)
+    print(f"3b. 404 tried once, reason shown: PASS -> {r.error}")
 
     # 4. parallelism: 3 calls x 1s each should take ~1s total, not ~3s
     async def slow(timeout):

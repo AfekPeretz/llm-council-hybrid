@@ -23,8 +23,11 @@ import sys
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+import ssl
+
 import httpx
-from anthropic import AsyncAnthropic
+import truststore
+from anthropic import AsyncAnthropic, DefaultAsyncHttpxClient
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -39,16 +42,22 @@ PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 GPT_MODEL = "gpt-4o"
-GEMINI_MODEL = "gemini-1.5-pro"
+GEMINI_MODEL = "gemini-pro-latest"
 PERPLEXITY_MODEL = "sonar-pro"
-CLAUDE_MODEL = "claude-sonnet-4-5"
+CLAUDE_MODEL = "claude-sonnet-5-5"
 
-TIMEOUT_FIRST = 10.0   # seconds, first attempt (external calls)
-TIMEOUT_RETRY = 8.0    # seconds, retry attempt (external calls)
+TIMEOUT_FIRST = 30.0   # seconds, first attempt (external calls)
+TIMEOUT_RETRY = 20.0    # seconds, retry attempt (external calls)
 CLAUDE_MAX_TOKENS = 1024
 CHAIRMAN_MAX_TOKENS = 2048
 
-anthropic_client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+# Use the OS certificate store (macOS Keychain etc.) instead of Python's bundled one,
+# so the script works on machines behind a corporate TLS-inspecting proxy.
+SSL_CTX = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+anthropic_client = (AsyncAnthropic(api_key=ANTHROPIC_API_KEY,
+                                   http_client=DefaultAsyncHttpxClient(verify=SSL_CTX))
+                    if ANTHROPIC_API_KEY else None)
 
 # ---------------------------------------------------------------------------
 # Lens prompts — the lens IS the system prompt. No generic "analyze this".
@@ -143,10 +152,15 @@ async def with_retry(source: str, lens: str,
         try:
             text = await attempt_fn(timeout)
             return VoiceResponse(source=source, lens=lens, text=text)
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:300].replace("\n", " ")
+            last_error = f"HTTP {e.response.status_code}: {body}"
+            if e.response.status_code in (400, 401, 403, 404):
+                break  # won't fix itself on retry
         except Exception as e:
             last_error = f"{type(e).__name__}: {e}"
     return VoiceResponse(source=source, lens=lens,
-                         error=f"unavailable after retry ({last_error})")
+                         error=f"unavailable ({last_error})")
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +171,7 @@ async def call_gpt_executor(question: str) -> VoiceResponse:
     """GPT-4o = The Executor. OpenAI shape: Bearer header, system role message,
     text at choices[0].message.content."""
     async def attempt(timeout: float) -> str:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, verify=SSL_CTX) as client:
             resp = await client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
@@ -173,18 +187,20 @@ async def call_gpt_executor(question: str) -> VoiceResponse:
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"]
 
+    if not OPENAI_API_KEY:
+        return VoiceResponse("GPT", "Executor", error="no OPENAI_API_KEY in .env")
     return await with_retry("GPT", "Executor", attempt)
 
 
 async def call_gemini_expansionist(question: str) -> VoiceResponse:
-    """Gemini 1.5 Pro = The Expansionist. Gemini shape: key as query param,
+    """Gemini Pro (latest) = The Expansionist. Gemini shape: key in the x-goog-api-key header (never in the URL, so it can't leak into errors),
     system prompt in system_instruction, temperature in generationConfig,
     text at candidates[0].content.parts[0].text."""
     async def attempt(timeout: float) -> str:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, verify=SSL_CTX) as client:
             resp = await client.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
-                params={"key": GOOGLE_API_KEY},
+                headers={"x-goog-api-key": GOOGLE_API_KEY},
                 json={
                     "system_instruction": {
                         "parts": [{"text": LENS_PROMPTS["Expansionist"]}]
@@ -196,6 +212,8 @@ async def call_gemini_expansionist(question: str) -> VoiceResponse:
             resp.raise_for_status()
             return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
 
+    if not GOOGLE_API_KEY:
+        return VoiceResponse("Gemini", "Expansionist", error="no GOOGLE_API_KEY in .env")
     return await with_retry("Gemini", "Expansionist", attempt)
 
 
@@ -205,7 +223,7 @@ async def call_perplexity_outsider(question: str) -> VoiceResponse:
     likely to hit the timeout (it searches the web mid-call) — which is exactly
     why the retry/graceful-degradation pattern exists."""
     async def attempt(timeout: float) -> str:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, verify=SSL_CTX) as client:
             resp = await client.post(
                 "https://api.perplexity.ai/chat/completions",
                 headers={"Authorization": f"Bearer {PERPLEXITY_API_KEY}"},
@@ -221,6 +239,8 @@ async def call_perplexity_outsider(question: str) -> VoiceResponse:
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"]
 
+    if not PERPLEXITY_API_KEY:
+        return VoiceResponse("Perplexity", "Outsider", error="no PERPLEXITY_API_KEY in .env")
     return await with_retry("Perplexity", "Outsider", attempt)
 
 
@@ -230,11 +250,10 @@ async def call_perplexity_outsider(question: str) -> VoiceResponse:
 
 async def call_claude(system: str, user: str, max_tokens: int = CLAUDE_MAX_TOKENS) -> str:
     """Single choke point for every internal Claude call (lens agents,
-    reviewers, chairman). T=0 everywhere per the spec."""
+    reviewers, chairman). No temperature param: the current anthropic SDK rejects it."""
     resp = await anthropic_client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=max_tokens,
-        temperature=0,
         system=system,
         messages=[{"role": "user", "content": user}],
     )
@@ -389,13 +408,14 @@ async def council_pipeline(question: str, verbose: bool = True) -> str:
             print(msg, file=sys.stderr)
 
     log(f"⚖️  Council convening on: {question}")
-    log("→ Phase 1/3: firing 8 voices in parallel (T=0)...")
+    log("→ Phase 1/3: firing 8 voices in parallel...")
     responses = await run_council(question)
 
     ok = [r for r in responses if r.ok]
     failed = [r for r in responses if not r.ok]
-    log(f"   {len(ok)}/8 voices answered" +
-        (f" — absent: {', '.join(r.label for r in failed)}" if failed else ""))
+    log(f"   {len(ok)}/8 voices answered")
+    for r in failed:
+        log(f"   ✗ {r.label}: {r.error}")
     if not ok:
         return "All 8 voices failed — check API keys and connectivity."
 

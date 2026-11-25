@@ -19,14 +19,14 @@ $ python scripts/council.py "should I charge monthly or yearly for my SaaS?"
 
 Asking one model for "pros and cons" gets you mush. This council forces genuine disagreement two ways at once:
 
-**Different models** — GPT-4o, Gemini 1.5 Pro, Perplexity sonar-pro, and Claude have different training, different blind spots, and (in Perplexity's case) live web search. When they disagree on the same prompt, that disagreement is information.
+**Different models** — GPT-4o, Gemini Pro (latest), Perplexity sonar-pro, and Claude have different training, different blind spots, and (in Perplexity's case) live web search. When they disagree on the same prompt, that disagreement is information.
 
 **Different lenses** — every voice is locked into one persona and told not to hedge:
 
 | Voice | Model | Lens |
 |---|---|---|
 | 1 | GPT-4o | **Executor** — what do I do Monday morning? |
-| 2 | Gemini 1.5 Pro | **Expansionist** — the upside everyone else misses |
+| 2 | Gemini Pro (latest) | **Expansionist** — the upside everyone else misses |
 | 3 | Perplexity sonar-pro | **Outsider** — fresh eyes, grounded in live web search |
 | 4–8 | Claude (internal) | Contrarian, First Principles, Expansionist, Outsider, Executor |
 
@@ -46,7 +46,7 @@ question
 
 Peer review is internal-only (Claude reviewers) on purpose — sending responses back out to three external APIs would roughly double the external cost for little extra rigor. The reviewers never see source names, so no brand-based bias.
 
-**Graceful degradation:** every external call gets a 10-second timeout, one retry at 8 seconds, and if it still fails the pipeline continues — the chairman is explicitly told to treat that voice as absent. Perplexity is the usual suspect (it runs a real web search mid-call).
+**Graceful degradation:** every external call gets a 30-second timeout, one retry at 20 seconds, and if it still fails the pipeline continues — the chairman is explicitly told to treat that voice as absent. Perplexity is the usual suspect (it runs a real web search mid-call).
 
 ## Setup
 
@@ -56,7 +56,7 @@ Requires Python 3.11+.
 git clone https://github.com/AfekPeretz/llm-council-hybrid.git
 cd llm-council-hybrid
 python3 -m venv .venv
-.venv/bin/pip install httpx anthropic python-dotenv
+.venv/bin/pip install httpx anthropic python-dotenv truststore
 cp .env.template .env
 ```
 
