@@ -80,6 +80,7 @@ Only `ANTHROPIC_API_KEY` is mandatory (it powers the 5 internal voices, 5 review
 ```bash
 .venv/bin/python scripts/council.py "your decision here"
 .venv/bin/python scripts/council.py -q "your decision here"   # verdict only, no progress logs
+.venv/bin/python scripts/council.py --events "your decision here"   # machine-readable progress (for live views)
 ```
 
 A run takes roughly 20–60 seconds and costs about 3 external calls + 11 Claude calls.

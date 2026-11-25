@@ -18,8 +18,10 @@ import argparse
 import asyncio
 import os
 import random
+import json
 import string
 import sys
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -31,6 +33,15 @@ from anthropic import AsyncAnthropic, DefaultAsyncHttpxClient
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Progress events for live views (the /council panel). Off unless --events is given.
+EVENTS = False
+EVENT_PREFIX = "@@council "
+
+
+def emit(kind: str, **data) -> None:
+    if EVENTS:
+        print(EVENT_PREFIX + json.dumps({"type": kind, **data}), file=sys.stderr, flush=True)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -277,8 +288,32 @@ async def call_claude_lens(question: str, lens: str) -> VoiceResponse:
 # Phase 1 — fire all 8 voices, wait for ALL of them
 # ---------------------------------------------------------------------------
 
+VOICE_SEATS = [
+    ("GPT", "Executor"), ("Gemini", "Expansionist"), ("Perplexity", "Outsider"),
+    ("Internal Claude", "Contrarian"), ("Internal Claude", "First Principles"),
+    ("Internal Claude", "Expansionist"), ("Internal Claude", "Outsider"),
+    ("Internal Claude", "Executor"),
+]
+
+
+async def timed_voice(i: int, coro) -> VoiceResponse:
+    """Wraps one voice so a live view sees it start and finish, with its time."""
+    source, lens = VOICE_SEATS[i]
+    emit("voice_start", id=i, source=source, lens=lens)
+    t0 = time.monotonic()
+    try:
+        r = await coro
+    except Exception as e:
+        emit("voice_done", id=i, source=source, lens=lens, ok=False,
+             secs=round(time.monotonic() - t0, 1), error=f"internal bug: {e}")
+        raise
+    emit("voice_done", id=i, source=source, lens=lens, ok=r.ok,
+         secs=round(time.monotonic() - t0, 1), error=r.error)
+    return r
+
+
 async def run_council(question: str) -> list[VoiceResponse]:
-    tasks = [
+    coros = [
         call_gpt_executor(question),
         call_gemini_expansionist(question),
         call_perplexity_outsider(question),
@@ -288,6 +323,7 @@ async def run_council(question: str) -> list[VoiceResponse]:
         call_claude_lens(question, "Outsider"),
         call_claude_lens(question, "Executor"),
     ]
+    tasks = [timed_voice(i, c) for i, c in enumerate(coros)]
     # Every task already catches its own exceptions and returns a
     # VoiceResponse, so gather gets 8 clean objects — but return_exceptions
     # stays on as a last line of defense against bugs in our own code.
@@ -344,8 +380,11 @@ async def run_peer_review(question: str, packet: str, n_reviewers: int = 5) -> l
 
     async def one_review(i: int) -> str:
         try:
-            return await call_claude(REVIEWER_SYSTEM, user_msg)
+            out = await call_claude(REVIEWER_SYSTEM, user_msg)
+            emit("review_done", id=i, ok=True)
+            return out
         except Exception as e:
+            emit("review_done", id=i, ok=False, error=f"{type(e).__name__}: {e}")
             return f"[Reviewer {i + 1} unavailable: {type(e).__name__}]"
 
     return await asyncio.gather(*(one_review(i) for i in range(n_reviewers)))
@@ -408,7 +447,9 @@ async def council_pipeline(question: str, verbose: bool = True) -> str:
             print(msg, file=sys.stderr)
 
     log(f"⚖️  Council convening on: {question}")
+    emit("start", question=question)
     log("→ Phase 1/3: firing 8 voices in parallel...")
+    emit("phase", n=1)
     responses = await run_council(question)
 
     ok = [r for r in responses if r.ok]
@@ -417,15 +458,19 @@ async def council_pipeline(question: str, verbose: bool = True) -> str:
     for r in failed:
         log(f"   ✗ {r.label}: {r.error}")
     if not ok:
+        emit("failed", message="All 8 voices failed — check API keys and connectivity.")
         return "All 8 voices failed — check API keys and connectivity."
 
     log("→ Phase 2/3: anonymizing + 5 parallel peer reviewers...")
+    emit("phase", n=2, voices_ok=len(ok))
     packet, _ = anonymize(responses)
     reviews = await run_peer_review(question, packet)
 
     log("→ Phase 3/3: chairman synthesis...")
+    emit("phase", n=3)
     verdict = await run_chairman(question, responses, reviews)
     log("✓ Done.\n")
+    emit("done", verdict=verdict)
     return verdict
 
 
@@ -433,7 +478,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run a question through the LLM Council")
     parser.add_argument("question", nargs="*", help="The question/decision to put to the council")
     parser.add_argument("-q", "--quiet", action="store_true", help="Print only the verdict")
+    parser.add_argument("--events", action="store_true",
+                        help="Emit machine-readable progress lines on stderr (used by the /council panel)")
     args = parser.parse_args()
+    global EVENTS
+    EVENTS = args.events
 
     question = " ".join(args.question).strip()
     if not question:
@@ -451,12 +500,17 @@ def main() -> None:
     if "ANTHROPIC_API_KEY" in missing:
         print("ANTHROPIC_API_KEY is required (internal voices, reviewers, chairman). "
               "Copy .env.template to .env and fill it in.")
+        emit("failed", message="ANTHROPIC_API_KEY is missing from .env")
         sys.exit(1)
     if missing:
         print(f"Note: missing keys ({', '.join(missing)}) — those voices will "
               f"degrade gracefully and the chairman will be notified.", file=sys.stderr)
 
-    verdict = asyncio.run(council_pipeline(question, verbose=not args.quiet))
+    try:
+        verdict = asyncio.run(council_pipeline(question, verbose=not (args.quiet or args.events)))
+    except Exception as e:
+        emit("failed", message=f"{type(e).__name__}: {e}")
+        raise
     print(verdict)
 
 
